@@ -19,6 +19,7 @@ public class Vehicle implements PacketHandler {
     private short sysid;
     private short compid;
     private List<msg_mission_item> missionPoints = new ArrayList<>();
+    private VehicleParameters vehicleParameters;
 
     //Util vars
     private final long connectionTime = 5000;
@@ -77,17 +78,19 @@ public class Vehicle implements PacketHandler {
                 break;
 
             case msg_mission_request.MAVLINK_MSG_ID_MISSION_REQUEST:
-                msg_mission_request sendReques = (msg_mission_request) message;
-                msg_mission_item itemToSend = missionPoints.get(sendReques.seq);
-                itemToSend.target_component = compid;
-                itemToSend.target_system = sysid;
-                itemToSend.seq = sendReques.seq;
-                sendMessage(itemToSend);
+                msg_mission_request sendRequest = (msg_mission_request) message;
+                if (sendRequest.sysid == sysid) {
+                    msg_mission_item itemToSend = missionPoints.get(sendRequest.seq);
+                    itemToSend.target_component = compid;
+                    itemToSend.target_system = sysid;
+                    itemToSend.seq = sendRequest.seq;
+                    sendMessage(itemToSend);
+                }
                 break;
 
             case msg_mission_ack.MAVLINK_MSG_ID_MISSION_ACK:
                 msg_mission_ack ack = (msg_mission_ack) message;
-                if (onPointsSent != null) {
+                if (ack.sysid == sysid && onPointsSent != null) {
                     if (ack.type == MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED) {
                         onPointsSent.handle("Mission Accepted");
                     } else {
@@ -98,33 +101,36 @@ public class Vehicle implements PacketHandler {
 
             case msg_mission_count.MAVLINK_MSG_ID_MISSION_COUNT:
                 msg_mission_count msgMissionCount = (msg_mission_count) message;
-                receiveCount = msgMissionCount.count;
-                msg_mission_request receiveRequest = new msg_mission_request();
-                receiveRequest.target_component = compid;
-                receiveRequest.target_system = sysid;
-                receiveRequest.seq = 0;
-                sendMessage(receiveRequest);
+                if (msgMissionCount.sysid == sysid) {
+                    receiveCount = msgMissionCount.count;
+                    msg_mission_request receiveRequest = new msg_mission_request();
+                    receiveRequest.target_component = compid;
+                    receiveRequest.target_system = sysid;
+                    receiveRequest.seq = 0;
+                    sendMessage(receiveRequest);
+                }
                 break;
 
             case msg_mission_item.MAVLINK_MSG_ID_MISSION_ITEM:
                 msg_mission_item receivedItem = (msg_mission_item) message;
-                missionPoints.add(receivedItem);
-                if (missionPoints.size() < receiveCount) {
-                    msg_mission_request newRequest = new msg_mission_request();
-                    newRequest.target_component = compid;
-                    newRequest.target_system = sysid;
-                    newRequest.seq = missionPoints.size();
-                    sendMessage(newRequest);
-                } else {
-                    msg_mission_ack receiveAck = new msg_mission_ack();
-                    receiveAck.type = MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED;
-                    receiveAck.target_component = compid;
-                    receiveAck.target_system = sysid;
-                    sendMessage(receiveAck);
-                    System.out.println(message);
-                    onPointsReceived.handle(missionPoints);
+                if (receivedItem.sysid == sysid) {
+                    missionPoints.add(receivedItem);
+                    if (missionPoints.size() < receiveCount) {
+                        msg_mission_request newRequest = new msg_mission_request();
+                        newRequest.target_component = compid;
+                        newRequest.target_system = sysid;
+                        newRequest.seq = missionPoints.size();
+                        sendMessage(newRequest);
+                    } else {
+                        msg_mission_ack receiveAck = new msg_mission_ack();
+                        receiveAck.type = MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED;
+                        receiveAck.target_component = compid;
+                        receiveAck.target_system = sysid;
+                        sendMessage(receiveAck);
+                        onPointsReceived.handle(missionPoints);
+                    }
+                    break;
                 }
-                break;
         }
     }
 
@@ -167,5 +173,9 @@ public class Vehicle implements PacketHandler {
     @Override
     public String toString() {
         return String.format("Sysid = %d, Address = %s", sysid, vehicleAddress.toString());
+    }
+
+    public VehicleParameters getVehicleParameters() {
+        return vehicleParameters;
     }
 }

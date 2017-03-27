@@ -25,7 +25,7 @@ public class Gcs {
     }
 
     public void stopListening() {
-        udpMavWorker.interrupt();
+        udpMavWorker.stopWorker();
         listening = false;
     }
 

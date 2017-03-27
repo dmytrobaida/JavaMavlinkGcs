@@ -5,25 +5,28 @@ import main.gcs.interfaces.PacketHandler;
 
 import java.io.IOException;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 public class UdpMavWorker extends Thread {
     public static final int PACKET_SIZE = 512;
     private DatagramSocket udpSocket;
     private List<PacketHandler> packetHandlers = new ArrayList<>();
+    private Thread currentThread;
+    private Stack<PacketHandler> itemsToAdd = new Stack<>();
+    private Stack<PacketHandler> itemsToDelete = new Stack<>();
 
     public UdpMavWorker(int udpServerPort) throws SocketException {
         udpSocket = new DatagramSocket(udpServerPort);
     }
 
     public void addPacketHandler(PacketHandler packetHandler) {
-        Collections.synchronizedCollection(packetHandlers).add(packetHandler);
+//        Collections.synchronizedList(packetHandlers).add(packetHandler);
+        itemsToAdd.push(packetHandler);
     }
 
     public void deletePacketHandler(PacketHandler packetHandler) {
-        Collections.synchronizedCollection(packetHandlers).remove(packetHandler);
+        // Collections.synchronizedList(packetHandlers).remove(packetHandler);
+        itemsToDelete.push(packetHandler);
     }
 
     @Override
@@ -36,10 +39,18 @@ public class UdpMavWorker extends Thread {
                 udpSocket.receive(inputPacket);
                 MAVLinkPacket packet = PacketParser.parse(bytePacket);
                 if (packet != null) {
-                    if (packetHandlers.size() > 0) {
-                        IpPortAddress senderAddress = new IpPortAddress(inputPacket.getAddress(), inputPacket.getPort());
+                    IpPortAddress senderAddress = new IpPortAddress(inputPacket.getAddress(), inputPacket.getPort());
+                    ListIterator<PacketHandler> iterator = packetHandlers.listIterator();
+                    if (itemsToAdd.size() > 0) {
+                        iterator.add(itemsToAdd.pop());
+                    }
 
-                        for (PacketHandler packetHandler : Collections.synchronizedCollection(packetHandlers)) {
+                    while (iterator.hasNext()) {
+                        PacketHandler packetHandler = iterator.next();
+                        if (itemsToDelete.size() > 0 && packetHandler == itemsToDelete.peek()) {
+                            iterator.remove();
+                            itemsToDelete.pop();
+                        } else {
                             if (packetHandler.getVehicleAddress().equals(senderAddress)) {
                                 packetHandler.handlePacket(packet);
                             }
@@ -49,18 +60,36 @@ public class UdpMavWorker extends Thread {
             }
         } catch (IOException ignored) {
         }
-        System.out.println("Exit");
+
     }
 
     public void sendPacket(IpPortAddress receiver, MAVLinkPacket packet) {
-        new Thread(() -> {
-            byte[] data = packet.encodePacket();
-            DatagramPacket outputPacket = new DatagramPacket(data, data.length, receiver.getAddress(), receiver.getPort());
+        byte[] data = packet.encodePacket();
+
+        if (currentThread != null) {
             try {
-                udpSocket.send(outputPacket);
-            } catch (IOException e) {
+                currentThread.join();
+            } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-        }).start();
+        }
+
+        currentThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                DatagramPacket outputPacket = new DatagramPacket(data, data.length, receiver.getAddress(), receiver.getPort());
+                try {
+                    udpSocket.send(outputPacket);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+        currentThread.start();
+    }
+
+    public void stopWorker() {
+        interrupt();
+        udpSocket.close();
     }
 }
